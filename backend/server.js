@@ -1,99 +1,90 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
+const cors = require('cors');
 
 const app = express();
-const port = 3000;
+const PORT = 3000;
 
-// Middleware to parse JSON bodies
+// Middleware
+app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static('uploads'));
 
-// Temporary "database" to store video metadata
-let videos = [];
+// Ensure upload directory exists
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
 
-// Configure storage
+// Configure multer for video storage
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/'); // Save files to 'uploads' directory
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
   },
-  filename: function (req, file, cb) {
+  filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-// File filter for video files only
-const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith('video/')) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only video files are allowed!'), false);
-  }
-};
-
 const upload = multer({
   storage: storage,
-  fileFilter: fileFilter,
   limits: {
-    fileSize: 100 * 1024 * 1024 // 100MB limit for videos
+    fileSize: 100 * 1024 * 1024 // 100MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('video/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only video files are allowed!'), false);
+    }
   }
 });
 
-// POST /upload endpoint
+// In-memory storage for video metadata (replace with database in production)
+let videos = [];
+let currentId = 1;
+
+// Routes
 app.post('/upload', upload.single('video'), (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No video uploaded' });
+      return res.status(400).json({ error: 'No video file uploaded' });
     }
 
     const { title, description } = req.body;
-
-    const videoData = {
-      id: videos.length + 1,
-      title: title || 'Untitled',
-      description: description || '',
-      filename: req.file.filename,
+    const newVideo = {
+      id: currentId++,
+      title,
+      description,
       originalName: req.file.originalname,
-      size: req.file.size,
-      mimetype: req.file.mimetype,
-      path: req.file.path
+      path: '/uploads/' + req.file.filename,
+      size: req.file.size
     };
 
-    videos.push(videoData);
-
-    res.json({
-      message: 'Video uploaded successfully',
-      video: videoData
-    });
+    videos.push(newVideo);
+    res.status(201).json(newVideo);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Upload failed: ' + error.message });
   }
 });
 
-// GET /videos - list all videos
 app.get('/videos', (req, res) => {
   res.json(videos);
 });
 
-// GET /video/:id - get a specific video
-app.get('/video/:id', (req, res) => {
-  const video = videos.find(v => v.id === parseInt(req.params.id));
-  if (!video) {
-    return res.status(404).json({ error: 'Video not found' });
-  }
-  res.json(video);
-});
-
-// Error handling middleware for multer
+// Error handling middleware
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({ error: 'File too large' });
     }
   }
-  res.status(400).json({ error: error.message });
+  res.status(500).json({ error: error.message });
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
 });
